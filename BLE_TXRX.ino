@@ -9,6 +9,7 @@
 #define LED                               13
 
 BLE                                       ble;
+
 Timeout                                   timeout;
 Adafruit_BMP085_Unified baro_i2c         = Adafruit_BMP085_Unified(10085);
 Adafruit_FRAM_I2C fram_i2c               = Adafruit_FRAM_I2C();
@@ -20,12 +21,9 @@ union Flip
     int output;
 };
 
-//uint16_t framAddress = 0;
 boolean ledOn = false;
 
-static float sendData[SIZE];
-
-// Stores the transmitted data
+// Stores the data
 static uint8_t rxBuffer[TXRX_SIZE];
 
 static uint8_t rxBufNum;
@@ -73,15 +71,6 @@ uint8_t rxValue[TXRX_SIZE] = {0,};
 *        characteristic may be considered optional and dropped while
 *        instantiating the service with the underlying BLE stack.
 */
-/*GattCharacteristic(const UUID    &uuid,
-                uint8_t       *valuePtr       = NULL,
-                uint16_t       len            = 0,
-                uint16_t       maxLen         = 0,
-                uint8_t        props          = BLE_GATT_CHAR_PROPERTIES_NONE,
-                GattAttribute *descriptors[]  = NULL,
-                unsigned       numDescriptors = 0,
-                bool           hasVariableLen = true)*/
-
 GattCharacteristic bleRead(
     txCharacteristicUuid,
     txValue,
@@ -113,9 +102,6 @@ GattCharacteristic *uartChars[] = {&bleRead, &bleWrite};
 *  @param[in]  numCharacteristics
 *              The number of characteristics.
 */
-/*GattService(const UUID &uuid,
-            GattCharacteristic *characteristics[],
-            unsigned numCharacteristics)*/
 GattService uartService(
     rxTxServiceUuid,
     uartChars,
@@ -159,9 +145,6 @@ void writtenHandle(const GattWriteCallbackParams *Handler)
         * to ble.readCharacteristicValue() should be replaced with
         * ble.gattServer().read().
         */
-        /*ble_error_t readCharacteristicValue(GattAttribute::Handle_t attributeHandle, uint8_t *buffer, uint16_t *lengthP) {
-            return gattServer().read(attributeHandle, buffer, lengthP);
-        }*/
         ble.readCharacteristicValue(bleRead.getValueAttribute().getHandle(), buff, &bytesRead);
         Serial.print("(uint16_t)bytesRead: ");
         Serial.println(bytesRead, HEX);
@@ -208,39 +191,14 @@ void writtenHandle(const GattWriteCallbackParams *Handler)
         if (command == "write")
         {
             Flip pressure;
-            uint16_t framAddr = 0x01;
             int count = 0;
-            uint8_t arr[SIZE] = {0,};
             Serial.println("Writing barometer values to FRAM...");
-
-//            for (uint8_t i = 0; i < SIZE; i++)
-//            {
-//                arr[i] = i;
-//            }
 
             while(count < SIZE)
             {
                 sensors_event_t event;
                 baro_i2c.getEvent(&event);
                 
-                //Serial.print("Address ");
-                //Serial.print(framAddr);
-                //Serial.print(": ");
-                //Serial.println(arr[count], HEX);
-                
-                /**************************************************************************/
-                /*!
-                    @brief  Writes a byte at the specific FRAM address
-                    
-                    @params[in] i2cAddr
-                                The I2C address of the FRAM memory chip 0x50 (1010+A2+A1+A0)
-                    @params[in] framAddr
-                                The 16-bit address to write to in FRAM memory
-                    @params[in] i2cAddr
-                                The 8-bit value to write at framAddr
-                */
-                /**************************************************************************/
-                //fram_i2c.write8(framAddr, arr[count]);
                 if (event.pressure)
                 {
                     pressure.input = event.pressure;
@@ -248,6 +206,18 @@ void writtenHandle(const GattWriteCallbackParams *Handler)
                     Serial.print(pressure.input);
                     Serial.println(" hPa");
 
+                    /**************************************************************************/
+                    /*!
+                        @brief  Writes a byte at the specific FRAM address
+                        
+                        @params[in] i2cAddr
+                                    The I2C address of the FRAM memory chip 0x50 (1010+A2+A1+A0)
+                        @params[in] framAddr
+                                    The 16-bit address to write to in FRAM memory
+                        @params[in] i2cAddr
+                                    The 8-bit value to write at framAddr
+                    */
+                    /**************************************************************************/
                     fram_i2c.write8(0 + (count * 4), pressure.output);
                     fram_i2c.write8(1 + (count * 4), pressure.output >> 8);
                     fram_i2c.write8(2 + (count * 4), pressure.output >> 16);
@@ -255,44 +225,46 @@ void writtenHandle(const GattWriteCallbackParams *Handler)
                 }
 
                 count++;
-                framAddr++;
                 delay(500);
             }
         }
         // Read values from FRAM
         else if (command == "read")
         {
-            uint16_t framAddr = 0x01;
-            uint8_t data[SIZE] = {0,};
             Flip readPressure;
             readPressure.output = 0;
             uint8_t value;
+            
+            uint8_t str[SIZE] = "x";
+            char t = 'H';
+            
             Serial.println("Reading from the FRAM...");
 
             for (uint8_t i = 0; i < SIZE; i++)
             {
-//                data[i] = fram_i2c.read8(framAddr);
-//                Serial.print("Address ");
-//                Serial.print(framAddr);
-//                Serial.print(": ");
-//                Serial.println(data[i], HEX);
-
                 for (uint16_t a = 0; a < 4; a++)
                 {
                     value = fram_i2c.read8((i * 4) + (3 - a));
                     readPressure.output = (readPressure.output << 8) + value;
                 }
-                sendData[i] = readPressure.input;
                 Serial.print(readPressure.input);
                 Serial.println(" hPa");
 
-                framAddr++;
                 delay(500);
+
+                t += i;
+                str[i] = (byte)t;
+                Serial.write(str[i]);
+                Serial.println("");
+                sendCustomData(str, (i + 1));
             }
 
-            // Update characteristic data
-            //ble.updateCharacteristicValue(bleWrite.getValueAttribute().getHandle(), rxBuffer, rxBufNum);
-            //ble.updateCharacteristicValue(bleWrite.getValueAttribute().getHandle(), sendData, SIZE);
+            for(int j = 0; j < SIZE; j++)
+            {
+                uint8_t second[] = "Gotem";
+                sendCustomData(second, 5);
+                delay(500);
+            }
         }
         else
         {
@@ -300,6 +272,17 @@ void writtenHandle(const GattWriteCallbackParams *Handler)
             Serial.println("");
         }
     }
+}
+
+void sendCustomData(uint8_t *buf, uint8_t len)
+{
+    uint8_t data[20] = "ZA";
+
+    memcpy(&data[2], buf, len);
+    ble.updateCharacteristicValue(bleWrite.getValueAttribute().getHandle(), data, len+1);
+
+    // To clear the array
+    //memset(data, 0x00, 20);
 }
 
 void m_uart_rx_handle()
@@ -332,7 +315,6 @@ void m_uart_rx_handle()
     ble.updateCharacteristicValue(bleWrite.getValueAttribute().getHandle(), rxBuffer, rxBufNum);
     
     // To clear an array
-    // memset(data, 0, sizeof(data));
     memset(rxBuffer, 0x00, 20);
     rxState = 0;
 }
@@ -370,10 +352,10 @@ void setup() {
     Wire.begin();
     pinMode(LED, OUTPUT);
     Serial.attach(uart_handle);
+    
     if (!baro_i2c.begin())
     {
         Serial.print("Oops, no BMP085 detected ... check your wiring or I2C address");
-        //while(1);
     }
 
     if (!fram_i2c.begin())
@@ -389,6 +371,7 @@ void setup() {
     ble.accumulateAdvertisingPayload(GapAdvertisingData::BREDR_NOT_SUPPORTED);
     ble.accumulateAdvertisingPayload(GapAdvertisingData::SHORTENED_LOCAL_NAME,
                                      (const uint8_t *)"BLE Nano", sizeof("BLE Nano") - 1);
+    
     ble.accumulateAdvertisingPayload(GapAdvertisingData::COMPLETE_LIST_128BIT_SERVICE_IDS,
                                      (const uint8_t *)uart_base_uuid_rev, sizeof(uart_base_uuid_rev));
 
